@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; color: #1b2733; }
+  .bar { padding: 12px 16px; background: #f3f5f8; border-bottom: 1px solid #d9dfe6;
+         display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .bar select, .bar button { font-size: 15px; padding: 8px 12px; border-radius: 8px;
+                             border: 1px solid #c3ccd6; background: #fff; }
+  .bar button.primary { background: #0b6bcb; color: #fff; border-color: #0b6bcb; font-weight: 600; }
+  #info { color: #66727f; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 12px; }
+  .label { border: 1px dashed #9aa6b2; border-radius: 6px; padding: 8px 4px; text-align: center;
+           page-break-inside: avoid; break-inside: avoid; }
+  .label .qr { display: flex; justify-content: center; }
+  .label .ma { font-size: 18px; font-weight: 800; margin-top: 4px; }
+  .label .dh { font-size: 10px; color: #555; }
+  @media print {
+    .bar { display: none; }
+    @page { margin: 8mm; }
+    .grid { padding: 0; gap: 4px; }
+  }
+</style>
+</head>
+<body>
+<div class="bar">
+  <label>PIN <input type="password" id="pin" autocomplete="off"
+         style="width:110px;font-size:15px;padding:8px;border-radius:8px;border:1px solid #c3ccd6"></label>
+  <button onclick="loadList()">Tải danh sách</button>
+  <label>Tòa <select id="toa" onchange="fillTang()"></select></label>
+  <label>Tầng <select id="tang"></select></label>
+  <button class="primary" onclick="render()">Tạo nhãn</button>
+  <button onclick="window.print()">In / Lưu PDF</button>
+  <span id="info">Nhập PIN rồi bấm "Tải danh sách".</span>
+</div>
+<div class="grid" id="grid"></div>
+
+<script>
+  // ===== CAU HINH: dan link web app Apps Script (ket thuc bang /exec) vao day =====
+  var API_URL = 'https://script.google.com/macros/s/AKfycby2BXV8-TJGzbbX5puUrw0DW30_K-NDPuT4_MelWEQ4QTCICCbFM6an6o94pbxTyjSM/exec';
+
+  // Gia lap google.script.run de giu nguyen code giao dien: goi Apps Script qua fetch
+  var google = {script: {run: (function () {
+    function mk(ok, fail) {
+      return new Proxy({}, {get: function (_, name) {
+        if (name === 'withSuccessHandler') return function (f) { return mk(f, fail); };
+        if (name === 'withFailureHandler') return function (f) { return mk(ok, f); };
+        return function () {
+          var args = Array.prototype.slice.call(arguments);
+          fetch(API_URL, {method: 'POST',
+                          headers: {'Content-Type': 'text/plain;charset=utf-8'},
+                          body: JSON.stringify({fn: String(name), args: args})})
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+              if (j.error) throw new Error(j.error);
+              if (ok) ok(j.result);
+            })
+            .catch(function (e) { if (fail) fail(e); });
+        };
+      }});
+    }
+    return mk(null, null);
+  })()}};
+</script>
+<script>
+  var BASE = location.href.replace(/[^\/]*([?#].*)?$/, '') + 'index.html';
+  var DATA = [];
+
+  function $(id) { return document.getElementById(id); }
+
+  function loadList() {
+    var pin = $('pin').value.trim();
+    if (!pin) { $('info').textContent = 'Hãy nhập PIN.'; return; }
+    $('info').textContent = 'Đang tải danh sách…';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (!res.ok) { $('info').textContent = res.msg; return; }
+        try { localStorage.setItem('dp_pin', pin); } catch (e) {}
+        DATA = res.list;
+        var toas = unique(DATA.map(function (d) { return d.toaNha; }));
+        $('toa').innerHTML = '<option value="">Tất cả</option>' +
+          toas.map(function (t) { return '<option>' + esc(t) + '</option>'; }).join('');
+        fillTang();
+        $('info').textContent = DATA.length + ' đồng hồ trong danh mục.';
+      })
+      .withFailureHandler(function (e) {
+        $('info').textContent = 'Lỗi: ' + ((e && e.message) ? e.message : e);
+      })
+      .getLabelData(pin);
+  }
+
+  function unique(a) {
+    var seen = {}, out = [];
+    a.forEach(function (x) { if (!seen[x]) { seen[x] = 1; out.push(x); } });
+    return out;
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c];
+    });
+  }
+
+  function fillTang() {
+    var toa = $('toa').value;
+    var tangs = unique(DATA.filter(function (d) { return !toa || d.toaNha === toa; })
+                           .map(function (d) { return d.tang; }));
+    $('tang').innerHTML = '<option value="">Tất cả</option>' +
+      tangs.map(function (t) { return '<option>' + esc(t) + '</option>'; }).join('');
+  }
+
+  function render() {
+    var toa = $('toa').value, tang = $('tang').value;
+    var list = DATA.filter(function (d) {
+      return (!toa || d.toaNha === toa) && (!tang || d.tang === tang);
+    });
+    if (list.length > 300 && !confirm('Sẽ tạo ' + list.length + ' nhãn, trình duyệt có thể chậm. Tiếp tục?')) return;
+    var grid = $('grid');
+    grid.innerHTML = '';
+    list.forEach(function (d) {
+      var box = document.createElement('div');
+      box.className = 'label';
+      var qr = document.createElement('div');
+      qr.className = 'qr';
+      box.appendChild(qr);
+      var ma = document.createElement('div');
+      ma.className = 'ma';
+      ma.textContent = d.maCanHo;
+      box.appendChild(ma);
+      var dh = document.createElement('div');
+      dh.className = 'dh';
+      dh.textContent = d.maDongHo;
+      box.appendChild(dh);
+      grid.appendChild(box);
+      new QRCode(qr, {text: BASE + '?ma=' + encodeURIComponent(d.maCanHo), width: 110, height: 110});
+    });
+    $('info').textContent = 'Đã tạo ' + list.length + ' nhãn. Bấm "In / Lưu PDF".';
+  }
+
+  // Tu dong tai danh sach neu dien thoai/may da luu PIN
+  try {
+    var saved = localStorage.getItem('dp_pin');
+    if (saved) { $('pin').value = saved; loadList(); }
+  } catch (e) {}
+</script>
+</body>
+</html>
