@@ -36,6 +36,12 @@
   <button onclick="window.print()">In / Lưu PDF</button>
   <span id="info">Nhập PIN rồi bấm "Tải danh sách".</span>
 </div>
+<div class="bar" style="align-items:flex-start">
+  <label style="flex:1;min-width:260px">Hoặc dán danh sách mã căn hộ (mỗi dòng một mã, không cần PIN)<br>
+    <textarea id="custom" rows="3" placeholder="PC.0515&#10;PC.0516&#10;PA2401"
+      style="width:100%;box-sizing:border-box;font-size:15px;padding:8px;border-radius:8px;border:1px solid #c3ccd6"></textarea></label>
+  <button class="primary" onclick="renderCustom()">Tạo nhãn từ danh sách</button>
+</div>
 <div class="grid" id="grid"></div>
 
 <script>
@@ -111,32 +117,63 @@
       tangs.map(function (t) { return '<option>' + esc(t) + '</option>'; }).join('');
   }
 
+  var RUN = 0;   // so lan chay, de huy lan dang chay khi bam lai
+
   function render() {
     var toa = $('toa').value, tang = $('tang').value;
     var list = DATA.filter(function (d) {
       return (!toa || d.toaNha === toa) && (!tang || d.tang === tang);
+    }).map(function (d) { return {ma: d.maCanHo, dh: d.maDongHo}; });
+    draw(list);
+  }
+
+  // Tao nhan cho danh sach ma nhap tay (moi dong mot ma, khong can PIN)
+  function renderCustom() {
+    var seen = {}, list = [];
+    $('custom').value.split(/[\s,;]+/).forEach(function (m) {
+      m = m.replace(/[^A-Za-z0-9_.\-]/g, '');
+      if (m && !seen[m.toUpperCase()]) { seen[m.toUpperCase()] = 1; list.push({ma: m, dh: ''}); }
     });
-    if (list.length > 300 && !confirm('Sẽ tạo ' + list.length + ' nhãn, trình duyệt có thể chậm. Tiếp tục?')) return;
-    var grid = $('grid');
+    if (!list.length) { $('info').textContent = 'Hãy dán danh sách mã căn hộ (mỗi dòng một mã).'; return; }
+    draw(list);
+  }
+
+  // Ve nhan theo tung dot 60 cai de trinh duyet khong bi dung hinh
+  function draw(list) {
+    var run = ++RUN, i = 0, total = list.length, grid = $('grid');
     grid.innerHTML = '';
-    list.forEach(function (d) {
-      var box = document.createElement('div');
-      box.className = 'label';
-      var qr = document.createElement('div');
-      qr.className = 'qr';
-      box.appendChild(qr);
-      var ma = document.createElement('div');
-      ma.className = 'ma';
-      ma.textContent = d.maCanHo;
-      box.appendChild(ma);
-      var dh = document.createElement('div');
-      dh.className = 'dh';
-      dh.textContent = d.maDongHo;
-      box.appendChild(dh);
-      grid.appendChild(box);
-      new QRCode(qr, {text: BASE + '?ma=' + encodeURIComponent(d.maCanHo), width: 110, height: 110});
-    });
-    $('info').textContent = 'Đã tạo ' + list.length + ' nhãn. Bấm "In / Lưu PDF".';
+    if (!total) { $('info').textContent = 'Không có đồng hồ nào để tạo nhãn.'; return; }
+    function step() {
+      if (run !== RUN) return;
+      var end = Math.min(i + 60, total);
+      for (; i < end; i++) {
+        var d = list[i];
+        var box = document.createElement('div');
+        box.className = 'label';
+        var qr = document.createElement('div');
+        qr.className = 'qr';
+        box.appendChild(qr);
+        var ma = document.createElement('div');
+        ma.className = 'ma';
+        ma.textContent = d.ma;
+        box.appendChild(ma);
+        if (d.dh) {
+          var dh = document.createElement('div');
+          dh.className = 'dh';
+          dh.textContent = d.dh;
+          box.appendChild(dh);
+        }
+        grid.appendChild(box);
+        new QRCode(qr, {text: BASE + '?ma=' + encodeURIComponent(d.ma), width: 110, height: 110});
+      }
+      if (i < total) {
+        $('info').textContent = 'Đang tạo nhãn ' + i + '/' + total + '…';
+        setTimeout(step, 0);
+      } else {
+        $('info').textContent = 'Đã tạo ' + total + ' nhãn. Bấm "In / Lưu PDF".';
+      }
+    }
+    step();
   }
 
   // Tu dong tai danh sach neu dien thoai/may da luu PIN
