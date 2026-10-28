@@ -154,6 +154,7 @@
       <div class="res-row"><span>Tiêu thụ</span><b id="r-tt"></b></div>
       <div class="res-row"><span>Thành tiền</span><b id="r-tien"></b></div>
     </div>
+    <p class="note hidden" id="r-photo" style="margin-top:12px"></p>
     <button onclick="showSearch()">Ghi căn hộ khác</button>
   </div>
 
@@ -224,6 +225,8 @@
     PIN = loadPin();
     if (!PIN) { showLogin(''); return; }
     show('v-loading');
+    // Mo tu QR: goi thang getMeterInfo (da kiem tra PIN) de bo bot 1 luot cho
+    if (MA0) { var m0 = MA0; MA0 = ''; loadMeter(m0); return; }
     google.script.run
       .withSuccessHandler(function (r) {
         if (r.ok) { USER = r.name; afterLogin(); }
@@ -410,8 +413,15 @@
       })
       .catch(function (e) {
         if (!scanOpen) return;
-        scanFallback('Không mở được camera trực tiếp (' + ((e && e.name) ? e.name : 'lỗi') +
-                     '). Hãy chụp ảnh mã QR thay thế.');
+        var n = (e && e.name) ? e.name : 'lỗi';
+        var hint = {
+          NotAllowedError: 'Camera đang bị chặn cho trang này. Bấm biểu tượng khóa/cài đặt cạnh địa chỉ trang, chọn Camera = Cho phép, rồi tải lại trang. Nếu mở link trong Zalo/Messenger, hãy chọn "Mở bằng Safari/Chrome".',
+          NotReadableError: 'Camera đang được app hoặc tab khác sử dụng. Đóng các app/tab đó rồi thử lại.',
+          NotFoundError: 'Không tìm thấy camera trên thiết bị này.',
+          OverconstrainedError: 'Camera sau không dùng được.',
+          SecurityError: 'Trình duyệt không cho dùng camera ở trang này.'
+        }[n] || 'Không mở được camera trực tiếp.';
+        scanFallback(hint + ' (' + n + ') Có thể chụp ảnh mã QR thay thế.');
       });
   }
 
@@ -483,6 +493,7 @@
       return;
     }
     info = r;
+    if (r.nhanVien) USER = r.nhanVien;
     photoData = '';
     $('thumb').style.display = 'none';
     $('f-anh').value = '';
@@ -561,7 +572,7 @@
   function onPhoto(input) {
     var f = input.files && input.files[0];
     if (!f) return;
-    compressImage(f, 1280, 0.7).then(function (data) {
+    compressImage(f, 1024, 0.65).then(function (data) {
       photoData = data;
       var t = $('thumb');
       t.src = data;
@@ -603,7 +614,7 @@
       csCuoiCu: $('f-cuoi').value,
       csDauMoi: $('f-dau').value,
       ghiChu: $('f-ghichu').value,
-      anh: photoData,
+      coAnh: !!photoData,
       overwrite: !!flags.overwrite,
       xacNhan: !!flags.xacNhan
     };
@@ -615,13 +626,35 @@
     var btn = $('btn-send');
     btn.disabled = true;
     btn.textContent = 'Đang gửi…';
+    var pd = photoData;
     google.script.run
-      .withSuccessHandler(function (res) { onSubmitted(res, flags); })
+      .withSuccessHandler(function (res) { onSubmitted(res, flags, pd); })
       .withFailureHandler(function (e) {
         resetBtn();
         alert('Lỗi: ' + ((e && e.message) ? e.message : e));
       })
       .submitReading(payload);
+  }
+
+  // Tai anh len ngam sau khi da luu so; thu lai toi 3 lan neu mang yeu
+  function sendPhoto(id, data, tries) {
+    var box = $('r-photo');
+    if (!data || !id) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    box.textContent = 'Đang tải ảnh lên… (số đã được lưu, có thể ghi căn khác)';
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (r && r.status === 'OK') { box.textContent = '✓ Đã lưu ảnh'; return; }
+        if (r && r.status === 'AUTH') { box.textContent = 'Ảnh chưa lưu: PIN không còn hiệu lực.'; return; }
+        retry();
+      })
+      .withFailureHandler(retry)
+      .uploadPhoto({pin: PIN, id: id, anh: data});
+    function retry() {
+      if (tries < 2) { setTimeout(function () { sendPhoto(id, data, tries + 1); }, 2000); return; }
+      box.innerHTML = 'Chưa tải được ảnh. <a href="#" id="r-photo-retry">Thử lại</a>';
+      $('r-photo-retry').onclick = function (ev) { ev.preventDefault(); sendPhoto(id, data, 0); };
+    }
   }
 
   function resetBtn() {
@@ -630,7 +663,7 @@
     btn.textContent = 'Gửi';
   }
 
-  function onSubmitted(res, flags) {
+  function onSubmitted(res, flags, pd) {
     resetBtn();
     if (res.status === 'OK') {
       $('r-title').textContent = res.ghiDe ? 'Đã ghi đè' : 'Đã lưu';
@@ -645,6 +678,7 @@
       $('r-tt').textContent = fmt(res.tieuThu) + ' m³';
       $('r-tien').textContent = fmt(Math.round(res.thanhTien)) + ' đ';
       show('v-result');
+      sendPhoto(res.id, pd, 0);
     } else if (res.status === 'DUPLICATE') {
       if (confirm(res.msg)) submitForm({overwrite: true, xacNhan: flags.xacNhan});
     } else if (res.status === 'CONFIRM') {
